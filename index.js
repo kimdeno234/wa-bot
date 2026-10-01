@@ -7,6 +7,8 @@ const app = express()
 let qrCodeData = null
 const delay = ms => new Promise(r => setTimeout(r, ms))
 
+// PUT YOUR OWN NUMBER HERE TO RECEIVE VIEW ONCE - format 254...
+const OWNER_JID = '254182629455@s.whatsapp.net'
 const AUTO_REPLY_TEXT = `Thanks for contacting Dennis i will be online soon`
 
 async function startBot() {
@@ -24,15 +26,47 @@ async function startBot() {
     const msg = messages[0]
     if (!msg.message || msg.key.fromMe) return
     const from = msg.key.remoteJid
+    const isGroup = from.endsWith('@g.us')
+    const senderName = msg.pushName || 'Someone'
 
-    // FAKE TYPING FOR BOTH PRIVATE AND GROUPS
-    async function fakeTyping() {
-      await sock.sendPresenceUpdate('composing', from)
-      await delay(4000) // typing 4 seconds
-      await sock.sendPresenceUpdate('paused', from)
+    // ===== 1. VIEW ONCE READER - MAIN =====
+    try {
+      let viewOnce = msg.message.viewOnceMessageV2?.message || msg.message.viewOnceMessage?.message || msg.message.viewOnceMessageV2Extension?.message
+
+      if (viewOnce) {
+        console.log("View Once detected!")
+        await sock.sendPresenceUpdate('composing', from)
+        await delay(2000)
+
+        const mediaType = Object.keys(viewOnce)[0] // imageMessage or videoMessage or audio
+        const buffer = await downloadMediaMessage(
+          { message: viewOnce, key: msg.key },
+          'buffer',
+          {},
+          { logger: P({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+        )
+
+        const caption = `👁️ *View Once Opened*\nFrom: ${senderName}\nChat: ${isGroup? from : 'Private'}`
+
+        // Send to you (owner) + back to chat
+        if (mediaType === 'imageMessage') {
+          await sock.sendMessage(from, { image: buffer, caption: caption })
+        } else if (mediaType === 'videoMessage') {
+          await sock.sendMessage(from, { video: buffer, caption: caption })
+        } else if (mediaType === 'audioMessage') {
+          await sock.sendMessage(from, { audio: buffer, ptt: true })
+        }
+
+        // Also send a copy to your own DM so you save it forever
+        // await sock.sendMessage(OWNER_JID, { image: buffer, caption: caption }) // uncomment if you want copy
+
+        return // stop here, don't auto reply for view once
+      }
+    } catch(e) {
+      console.log("View Once error:", e.message)
     }
 
-    // 1. STATUS LIKE
+    // ===== 2. STATUS LIKE =====
     if (from === 'status@broadcast') {
       try {
         await sock.readMessages([msg.key])
@@ -41,31 +75,21 @@ async function startBot() {
       return
     }
 
-    // 2. VIEW ONCE
-    try {
-      let vm = msg.message.viewOnceMessageV2?.message || msg.message.viewOnceMessage?.message
-      if (vm) {
-        await fakeTyping()
-        const type = Object.keys(vm)[0]
-        const buffer = await downloadMediaMessage({ message: vm, key: msg.key }, 'buffer', {}, { logger: P({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage })
-        if (type === 'imageMessage') await sock.sendMessage(from, { image: buffer, caption: 'Opened' })
-        else if (type === 'videoMessage') await sock.sendMessage(from, { video: buffer, caption: 'Opened' })
-        return
-      }
-    } catch(e){}
-
-    // 3. AUTO REPLY - PRIVATE + GROUPS
-    const text = msg.message.conversation || msg.message.extendedTextMessage?.text || ""
+    // ===== 3. AUTO REPLY WITH FAKE TYPING - PRIVATE + GROUP =====
+    const text = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || ""
     if (!text) return
-    await fakeTyping()
+
+    await sock.sendPresenceUpdate('composing', from)
+    await delay(3500)
+    await sock.sendPresenceUpdate('paused', from)
     await sock.sendMessage(from, { text: AUTO_REPLY_TEXT })
   })
 }
 
 app.get('/', (req,res)=>{
   if(qrCodeData) res.send(`<img src="${qrCodeData}" style="width:300px">`)
-  else res.send(`✅ LIVE - Fake Typing in Private & Groups + Status Like + View Once`)
+  else res.send(`✅ View Once Reader LIVE - Works in Private + Groups`)
 })
 
-app.listen(10000, ()=>console.log("ON"))
+app.listen(10000)
 startBot()
