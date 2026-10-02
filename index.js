@@ -1,4 +1,4 @@
-import makeWASocket, { useMultiFileAuthState, downloadMediaMessage, DisconnectReason } from '@whiskeysockets/baileys'
+i8import makeWASocket, { useMultiFileAuthState, downloadMediaMessage, DisconnectReason } from '@whiskeysockets/baileys'
 import express from 'express'
 import QRCode from 'qrcode'
 import P from 'pino'
