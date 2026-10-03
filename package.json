@@ -1,12 +1,17 @@
 {
-  "name": "dennis-bot",
-  "type": "module",
+  "name": "dennis-tech-bot",
+  "version": "1.0.0",
+  "description": "DENNIS TECH 24/7 BOT with Auto Reply + Fake Typing + Anti ViewOnce",
   "main": "index.js",
-  "scripts": { "start": "node index.js" },
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.13",
-    "express": "^4.18.2",
-    "qrcode": "^1.5.3",
-    "pino": "^8.16.2"
+    "@whiskeysockets/baileys": "^6.7.8",
+    "pino": "^8.17.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "engines": {
+    "node": "20.x"
   }
 }
