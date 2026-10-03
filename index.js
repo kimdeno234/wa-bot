@@ -144,4 +144,4 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
   console.log('Port ' + PORT)
   start()
-})
+})await sock.sendMessage(jid, { text: `Hi ${push} 👋\nBot Active ✅\nType.menu` })
