@@ -1,147 +1,87 @@
-i8import makeWASocket, { useMultiFileAuthState, downloadMediaMessage, DisconnectReason } from '@whiskeysockets/baileys'
-import express from 'express'
-import QRCode from 'qrcode'
-import P from 'pino'
+const { default: makeWASocket, useMultiFileAuthState } = require("@whiskeysockets/baileys")
+const pino = require("pino")
+const fs = require("fs")
 
-const app = express()
-const PORT = process.env.PORT || 10000
-let qr = null
-const db = new Map()
-const sleep = (ms) => new Promise(r => setTimeout(r, ms))
-
-async function start() {
-  const { state, saveCreds } = await useMultiFileAuthState('auth')
+async function startBot() {
+  const { state, saveCreds } = await useMultiFileAuthState("./auth")
   const sock = makeWASocket({
     auth: state,
-    logger: P({ level: 'silent' }),
-    browser: ['Dennis', 'Chrome', '1.0'],
-    syncFullHistory: false,
-    markOnlineOnConnect: false
+    logger: pino({ level: "silent" }),
+    printQRInTerminal: false,
+    browser: ["DENNIS TECH", "Chrome", "1.0"]
   })
 
-  sock.ev.on('creds.update', saveCreds)
+  sock.ev.on("creds.update", saveCreds)
 
-  sock.ev.on('connection.update', async (a) => {
-    if (a.qr) qr = await QRCode.toDataURL(a.qr)
-    if (a.connection === 'open') {
-      qr = null
-      console.log('BOT ACTIVE')
+  if (!fs.existsSync("./auth/creds.json")) {
+    let phone = process.env.PHONE_NUMBER || ""
+    if(phone){
+      setTimeout(async () => {
+        try{
+          let code = await sock.requestPairingCode(phone)
+          console.log("PAIR CODE: " + code)
+        }catch{}
+      }, 4000)
     }
-    if (a.connection === 'close') {
-      const c = a.lastDisconnect?.error?.output?.statusCode
-      if (c!== DisconnectReason.loggedOut) setTimeout(start, 3000)
-    }
+  }
+
+  sock.ev.on("connection.update", (up) => {
+    const { connection } = up
+    if (connection === "open") console.log("✅ DENNIS BOT ACTIVE WITH FAKE TYPING")
+    if (connection === "close") startBot()
   })
 
-  sock.ev.on('messages.upsert', async ({ messages }) => {
-    const m = messages[0]
-    if (!m.message) return
-    const jid = m.key.remoteJid
-    const push = m.pushName || 'User'
-
-    // ANTI DELETE
-    if (m.message.protocolMessage && m.message.protocolMessage.type === 0) {
-      const old = db.get(m.message.protocolMessage.key.id)
-      if (old) {
-        try {
-          await sock.sendMessage(jid, { text: `*ANTIDELETE* from ${old.push}` })
-          if (old.type === 'text') await sock.sendMessage(jid, { text: old.data })
-          if (old.type === 'img') await sock.sendMessage(jid, { image: old.data, caption: `Deleted img from ${old.push}` })
-          if (old.type === 'vid') await sock.sendMessage(jid, { video: old.data, caption: `Deleted vid` })
-          if (old.type === 'stick') await sock.sendMessage(jid, { sticker: old.data })
-        } catch {}
-      }
-      return
-    }
-
-    // SAVE FOR ANTI DELETE
-    if (!m.key.fromMe && jid!== 'status@broadcast') {
-      try {
-        const id = m.key.id
-        const t = m.message.conversation || m.message.extendedTextMessage?.text
-        if (t) db.set(id, { type: 'text', data: t, push })
-        if (m.message.imageMessage &&!m.message.imageMessage.viewOnce) {
-          const buf = await downloadMediaMessage(m, 'buffer', {}, { logger: P({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage })
-          db.set(id, { type: 'img', data: buf, push })
-        }
-        if (m.message.videoMessage &&!m.message.videoMessage.viewOnce) {
-          const buf = await downloadMediaMessage(m, 'buffer', {}, { logger: P({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage })
-          db.set(id, { type: 'vid', data: buf, push })
-        }
-        if (m.message.stickerMessage) {
-          const buf = await downloadMediaMessage(m, 'buffer', {}, { logger: P({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage })
-          db.set(id, { type: 'stick', data: buf, push })
-        }
-      } catch {}
-    }
-
-    if (m.key.fromMe) return
-
-    // STATUS LIKE
-    if (jid === 'status@broadcast') {
-      try {
-        await sock.readMessages([m.key])
-        await sock.sendMessage(jid, { react: { text: '❤️', key: m.key } }, { statusJidList: [m.key.participant] })
-      } catch {}
-      return
-    }
-
-    // VIEW ONCE OPENER
+  sock.ev.on("messages.upsert", async (m) => {
     try {
-      let vo = null
-      if (m.message.viewOnceMessageV2) vo = m.message.viewOnceMessageV2.message
-      else if (m.message.viewOnceMessage) vo = m.message.viewOnceMessage.message
-      else if (m.message.imageMessage?.viewOnce || m.message.videoMessage?.viewOnce || m.message.audioMessage?.viewOnce) vo = m.message
+      const msg = m.messages[0]
+      if (!msg.message) return
+      const jid = msg.key.remoteJid
+      const push = msg.pushName || "there"
+      if (msg.key.fromMe) return
 
-      if (vo) {
-        const buf = await downloadMediaMessage({ key: m.key, message: vo }, 'buffer', {}, { logger: P({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage })
-        if (buf) {
-          if (vo.imageMessage) await sock.sendMessage(jid, { image: buf, caption: `*VIEW ONCE* from ${push}` })
-          if (vo.videoMessage) await sock.sendMessage(jid, { video: buf, caption: `*VIEW ONCE* from ${push}` })
-          if (vo.audioMessage) await sock.sendMessage(jid, { audio: buf, mimetype: 'audio/ogg; codecs=opus', ptt: true })
-        }
-        return
+      // AUTO TYPING FUNCTION
+      const doTyping = async () => {
+        await sock.sendPresenceUpdate('composing', jid)
+        await new Promise(r => setTimeout(r, 2500))
       }
-    } catch (e) { console.log('vo err', e.message) }
 
-    const text = m.message.conversation || m.message.extendedTextMessage?.text || m.message.imageMessage?.caption || ''
-    if (!text) return
+      // 1. ANTI-VIEWONCE
+      let viewOnce = msg.message.viewOnceMessageV2 || msg.message.viewOnceMessage
+      if (viewOnce) {
+        await doTyping()
+        let v = viewOnce.message
+        await sock.sendMessage(jid, { forward: { key: msg.key, message: v } })
+        await sock.sendMessage(jid, { text: "_ViewOnce Opened ✅ by DENNIS TECH_" })
+      }
 
-    // COMMANDS
-    if (text === '.ping') {
-      await sock.sendMessage(jid, { text: `Pong! Active ✅` })
-      return
-    }
-    if (text === '.menu') {
-      await sock.sendMessage(jid, { text: `*DENNIS BOT MENU*\n\n.ping\n.tagall\n.menu\n\nAuto:\n- ViewOnce opener\n- AntiDelete\n- Status view+like\n- Typing + Reply` })
-      return
-    }
-    if (text === '.tagall' && jid.endsWith('@g.us')) {
-      const meta = await sock.groupMetadata(jid)
-      const mems = meta.participants.map(p => p.id)
-      let out = ''
-      mems.forEach(x => out += `@${x.split('@')[0]} `)
-      await sock.sendMessage(jid, { text: out, mentions: mems })
-      return
-    }
+      // 2. GET TEXT
+      let text = ""
+      if (msg.message.conversation) text = msg.message.conversation
+      if (msg.message.extendedTextMessage) text = msg.message.extendedTextMessage.text
+      text = text.toLowerCase()
 
-    // AUTO REPLY + TYPING
-    await sock.sendPresenceUpdate('composing', jid)
-    await sleep(3000)
-    await sock.sendPresenceUpdate('paused', jid)
-    await sock.sendMessage(jid, { text: `Hi ${push} 👋\nBot Active ✅\nType.menu` })
+      // 3. AUTO REPLY WITH FAKE TYPING
+      if (text === "hi" || text === "hello" || text === "hey" || text === "habari" || text === "sasa") {
+        await doTyping()
+        await sock.sendMessage(jid, { text: `Hello 👋\nThanks for contacting DENNIS TECH.\nI'm currently offline, I'll reply shortly.\n\nType *.menu* for services.\n\n_This is auto reply from bot 🤖_` })
+      }
+
+      if (text === ".menu" || text === "menu") {
+        await doTyping()
+        await sock.sendMessage(jid, { text: `*DENNIS TECH BOT MENU* 🤖\n\n*.ping* - speed\n*.alive* - status\n*.menu* - this menu\n\n✅ Auto Reply\n✅ Anti-ViewOnce\n✅ Fake Typing\n✅ 24/7 Active\n\nType.ping to test` })
+      }
+
+      if (text === ".ping") {
+        await doTyping()
+        await sock.sendMessage(jid, { text: "Pong! 80ms ⚡ DENNIS TECH BOT" })
+      }
+
+      if (text === ".alive") {
+        await doTyping()
+        await sock.sendMessage(jid, { text: "✅ DENNIS TECH BOT IS ALIVE 24/7\nFake Typing: ON\nAuto Reply: ON" })
+      }
+
+    } catch (e) { console.log(e) }
   })
 }
-
-app.get('/', (req, res) => {
-  if (qr) {
-    res.send(`<center><h2>SCAN QR - DENNIS BOT</h2><img src="${qr}" width="320" style="border:10px solid #000;border-radius:20px"><p>WhatsApp > Linked Devices > Link</p><script>setTimeout(()=>location.reload(),20000)</script></center>`)
-  } else {
-    res.send(`<center><h1>BOT ACTIVE ✅</h1><p>ViewOnce</p><p>AntiDelete</p><p>Status Like</p><p>TagAll Ping Menu</p><p>Typing AutoReply</p></center>`)
-  }
-})
-
-app.listen(PORT, () => {
-  console.log('Port ' + PORT)
-  start()
-await sock.sendMessage(jid, { text: `Hello 👋\nThanks for contacting DENNIS TECH.\nI'm currently offline, I'll reply shortly.\n\nType *.menu* for services.\n\n_This is auto reply from bot 🤖_` })
+startBot()
