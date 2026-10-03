@@ -144,4 +144,4 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
   console.log('Port ' + PORT)
   start()
-})await sock.sendMessage(jid, { text: `Hi ${push} 👋\nBot Active ✅\nType.menu` })
+await sock.sendMessage(jid, { text: `Hello 👋\nThanks for contacting DENNIS TECH.\nI'm currently offline, I'll reply shortly.\n\nType *.menu* for services.\n\n_This is auto reply from bot 🤖_` })
